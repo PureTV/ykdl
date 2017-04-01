@@ -7,7 +7,7 @@ from ykdl.extractor import VideoExtractor
 from ykdl.videoinfo import VideoInfo
 from ykdl.compact import urlencode,compact_bytes
 
-import hashlib
+from hashlib import md5
 import time
 import json
 import uuid
@@ -20,6 +20,7 @@ class Douyutv(VideoExtractor):
 
     stream_ids = ['TD', 'HD', 'SD']
     stream_id_2_rate = {'TD':3 , 'HD':2, 'SD':1}
+    id_2_profile = {'TD': u'超清' , 'HD':u'高清', 'SD':u'标清'}
 
     def prepare(self):
         info = VideoInfo(self.name, True)
@@ -28,28 +29,23 @@ class Douyutv(VideoExtractor):
 
         if not self.vid:
             html = get_content(self.url)
-            self.vid = match1(html, '"room_id":(\d+)')
-            info.title = match1(html, '<title>([^<]+)').split('-')[0]
-        if not info.title:
-            info.title = self.name + '-' + str(self.vid)
-        tt = int(time.time() / 60)
-        did = uuid.uuid4().hex.upper()
-        sign_content = '{room_id}{did}A12Svb&%1UUmf@hC{tt}'.format(room_id = self.vid, did = did, tt = tt)
-        sign = hashlib.md5(sign_content.encode('utf-8')).hexdigest()
+            self.vid = match1(html, '"room_id.?":(\d+)')
 
-        json_request_url = "http://www.douyu.com/lapi/live/getPlay/{}".format(self.vid)
         for stream in self.stream_ids:
-            payload = {'cdn': 'ws', 'rate': self.stream_id_2_rate[stream], 'tt': tt, 'did': did, 'sign': sign}
+            tt = int(time.time())
+            rate = self.stream_id_2_rate[stream]
+            signContent = 'lapi/live/thirdPart/getPlay/{}?aid=pcclient&rate={}&time={}9TUk5fjjUjg9qIMH3sdnh'.format(self.vid, rate , tt)
+            sign = md5(signContent.encode('utf-8')).hexdigest()
+            url = 'http://coapi.douyucdn.cn/lapi/live/thirdPart/getPlay/{}?rate={}'.format(self.vid, rate)
 
-            request_form = urlencode(payload)
-            html_content = get_content(json_request_url, data = compact_bytes(request_form, 'utf-8'))
+            html_content = get_content(url, headers = {		'auth': sign, 'time': str(tt), 'aid': 'pcclient' })
+            live_data = json.loads(html_content)['data']
 
-            live_data = json.loads(html_content)
-            assert live_data['error'] == 0, '%s: live show is not on line or server error!' % self.name
-            real_url = live_data['data']['rtmp_url'] + '/' + live_data['data']['rtmp_live']
+            real_url = live_data['live_url']
 
             info.stream_types.append(stream)
-            info.streams[stream] = {'container': 'flv', 'video_profile': stream, 'src' : [real_url], 'size': float('inf')}
+            info.streams[stream] = {'container': 'flv', 'video_profile': self.id_2_profile[stream], 'src' : [real_url], 'size': float('inf')}
+            info.title = live_data['room_name']
         return info
 
     def prepare_list(self):
